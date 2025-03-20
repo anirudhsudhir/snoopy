@@ -23,24 +23,28 @@ pub enum Error {
 #[derive(Debug)]
 pub struct VpnConfig {
     tun_addr: String,
-    udp_addr: String,
-    udp_send_port: u16,
+    udp_remote_addr: String,
+    udp_local_port: u16,
 }
 
 impl VpnConfig {
-    pub fn new(tun_addr: String, udp_addr: String, udp_send_port: u16) -> Result<Self, Error> {
+    pub fn new(
+        tun_addr: String,
+        udp_remote_addr: String,
+        udp_local_port: u16,
+    ) -> Result<Self, Error> {
         Ok(VpnConfig {
             tun_addr,
-            udp_addr,
-            udp_send_port,
+            udp_remote_addr,
+            udp_local_port,
         })
     }
 }
 
 pub struct Vpn {
     tun_device: AsyncDevice,
-    udp_listen_sock: UdpSocket,
-    udp_send_sock: UdpSocket,
+    udp_local_sock: UdpSocket,
+    udp_remote_addr: String,
 }
 
 impl Vpn {
@@ -62,28 +66,24 @@ impl Vpn {
         let tun_device = tun::create_as_async(&config)
             .inspect_err(|e| error!("[Vpn::new] failed to create tun device -> {:?}", e))?;
 
-        let udp_send_sock = UdpSocket::bind(SocketAddr::new(
+        let udp_local_sock = UdpSocket::bind(SocketAddr::new(
             IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
-            vpn_config.udp_send_port,
+            vpn_config.udp_local_port,
         ))
         .await
         .inspect_err(|e| error!("[Vpn::new] failed to bind to udp send socket -> {:?}", e))?;
 
-        let udp_listen_sock = UdpSocket::bind(vpn_config.udp_addr)
-            .await
-            .inspect_err(|e| error!("[Vpn::new] failed to bind to udp recv socket -> {:?}", e))?;
-
         Ok(Vpn {
             tun_device,
-            udp_send_sock,
-            udp_listen_sock,
+            udp_local_sock,
+            udp_remote_addr: vpn_config.udp_remote_addr,
         })
     }
 
     pub async fn network_listen(&self) -> Result<(), Error> {
         let mut buf = [0u8; 1500];
         loop {
-            self.udp_listen_sock.recv(&mut buf).await.inspect_err(|e| {
+            self.udp_local_sock.recv(&mut buf).await.inspect_err(|e| {
                 error!(
                     "[Vpn::network_listen] failed to recv from udp recv socket -> {:?}",
                     e
@@ -104,12 +104,16 @@ impl Vpn {
                     e
                 )
             })?;
-            self.udp_send_sock.send(&buf).await.inspect_err(|e| {
-                error!(
-                    "[Vpn::tun_listen] failed to send tun packet to udp send socket -> {:?}",
-                    e
-                )
-            })?;
+
+            self.udp_local_sock
+                .send_to(&buf, &self.udp_remote_addr)
+                .await
+                .inspect_err(|e| {
+                    error!(
+                        "[Vpn::tun_listen] failed to send tun packet to udp send socket -> {:?}",
+                        e
+                    )
+                })?;
         }
 
         #[allow(unreachable_code)]
