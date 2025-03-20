@@ -1,4 +1,4 @@
-use std::{net::Ipv4Addr, sync::Arc};
+use std::{env, sync::Arc};
 
 use snoopy::{Vpn, VpnConfig};
 
@@ -16,7 +16,13 @@ async fn main() {
     "#
     );
 
-    let vpn_config = VpnConfig::new(Ipv4Addr::new(127, 0, 0, 1), 8000, 8001).unwrap();
+    let mut args = env::args();
+    args.next();
+    let tun_addr = args.next().unwrap();
+    let udp_addr = args.next().unwrap();
+    let udp_send_port = args.next().unwrap().parse::<u16>().unwrap();
+
+    let vpn_config = VpnConfig::new(tun_addr, udp_addr, udp_send_port).unwrap();
     let vpn = Vpn::new(vpn_config).await.unwrap();
     let vpn_tun_listen = Arc::new(vpn);
     let vpn_network_listen = vpn_tun_listen.clone();
