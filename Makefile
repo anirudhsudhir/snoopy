@@ -1,8 +1,8 @@
 host-run:
-	sudo cargo r -- 10.0.0.2 192.168.197.2:8000 8001
+	sudo LOG_LEVEL=TRACE cargo r -- 10.0.0.2 192.168.97.2:8000 8001
 
 container-run:
-	cargo r -- 10.0.0.3 192.168.197.1:8001 8000
+	LOG_LEVEL=TRACE cargo r -- 10.0.0.3 192.168.97.0:8001 8000
 
 build-container-image:
 	sudo docker build -t snoopy_docker_image .
@@ -20,6 +20,3 @@ server-container-init:
 server-container-run:
 	-docker start server
 	-docker attach server
-
-client-container:
-	docker run --name client --rm -it --network=snoopy snoopy_docker_image
