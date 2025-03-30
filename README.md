@@ -2,18 +2,18 @@
 
 A VPN written in Rust.
 
-## Demo - `netcat` from a host to a container on a virtual network
+## Demo - `netcat` from a host to a VM over a virtual network
 
 #### Host
 
-Physical IP: 192.168.97.0
-
 Virtual Network IP: 10.0.0.2 (tun interface on host - macOS)
 
-#### Container
+#### VM
 
-Physical IP: 192.168.97.2
+Virtual Network IP: 10.0.0.1 (tun interface on VM - Linux)
 
-Virtual Network IP: 10.0.0.3 (tun interface on container - Linux)
+![Netcat from a host to a VM over a virtual network](resources/netcat_virtual_network.png)
 
-![Netcat Host to Container](resources/netcat_host_to_container.png)
+## Credits
+
+- [https://github.com/meh/rust-tun/](https://github.com/meh/rust-tun/)
