@@ -1,6 +1,10 @@
+mod config;
+
 use std::{env, sync::Arc};
 
 use snoopy::{Vpn, VpnConfig};
+
+const USAGE: &str = "Usage: ./snoopy [path_to_config]";
 
 #[tokio::main]
 async fn main() {
@@ -18,11 +22,14 @@ async fn main() {
 
     let mut args = env::args();
     args.next();
-    let tun_addr = args.next().unwrap();
-    let udp_remote_addr = args.next().unwrap();
-    let udp_local_port = args.next().unwrap().parse::<u16>().unwrap();
+    let conf = config::parse_config(&args.next().expect(USAGE));
 
-    let vpn_config = VpnConfig::new(tun_addr, udp_remote_addr, udp_local_port).unwrap();
+    let vpn_config = VpnConfig::new(
+        conf.interface.virtual_address,
+        conf.interface.endpoint,
+        conf.peer.endpoint,
+    )
+    .unwrap();
     let vpn = Vpn::new(vpn_config).await.unwrap();
     let vpn_tun_listen = Arc::new(vpn);
     let vpn_network_listen = vpn_tun_listen.clone();

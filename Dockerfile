@@ -1,5 +1,13 @@
-FROM rust:1.85-alpine
+# TODO: Build the binary and copy it to a minimal image using a multi-stage build
 
-RUN apk add alpine-sdk
+FROM alpine
+
+WORKDIR /usr/app/snoopy
+
+RUN apk update
 RUN apk add netcat-openbsd
-RUN apk add python3
+
+COPY target/aarch64-unknown-linux-musl/debug/snoopy .
+
+ENV LOG_LEVEL=TRACE
+CMD ["./snoopy","config.toml"]

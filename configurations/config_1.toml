@@ -1,0 +1,8 @@
+[interface]
+name = "peer_1"
+virtual_address = "10.0.0.2"
+endpoint = "peer_1:8080"
+
+[peer]
+name = "peer_2"
+endpoint = "peer_2:8080"

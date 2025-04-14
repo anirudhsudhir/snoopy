@@ -1,0 +1,18 @@
+services:
+  peer_1:
+    image: snoopy_test
+    volumes:
+      - ./configurations/config_1.toml:/usr/app/snoopy/config.toml
+    cap_add:
+      - NET_ADMIN
+    devices:
+        - /dev/net/tun
+
+  peer_2:
+    image: snoopy_test
+    volumes:
+      - ./configurations/config_2.toml:/usr/app/snoopy/config.toml
+    cap_add:
+      - NET_ADMIN
+    devices:
+        - /dev/net/tun

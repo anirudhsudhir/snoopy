@@ -4,10 +4,7 @@ use tracing_subscriber::{FmtSubscriber, fmt::time};
 
 use tun::{AsyncDevice, Configuration};
 
-use std::{
-    env, io,
-    net::{IpAddr, Ipv4Addr, SocketAddr},
-};
+use std::{env, io};
 
 const TUN_PACKET_MTU: u16 = 1472;
 
@@ -23,20 +20,20 @@ pub enum Error {
 #[derive(Debug)]
 pub struct VpnConfig {
     tun_addr: String,
+    udp_local_addr: String,
     udp_remote_addr: String,
-    udp_local_port: u16,
 }
 
 impl VpnConfig {
     pub fn new(
         tun_addr: String,
+        udp_local_addr: String,
         udp_remote_addr: String,
-        udp_local_port: u16,
     ) -> Result<Self, Error> {
         Ok(VpnConfig {
             tun_addr,
+            udp_local_addr,
             udp_remote_addr,
-            udp_local_port,
         })
     }
 }
@@ -71,19 +68,14 @@ impl Vpn {
             )
         })?;
 
-        let udp_local_sock = UdpSocket::bind(SocketAddr::new(
-            IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
-            vpn_config.udp_local_port,
-        ))
-        .await
-        .inspect_err(|e| {
-            error!(
-                //TODO: Update address logging
-                "[Vpn::new] failed to bind to udp send socket to addr = {:?} -> {:?}",
-                "0.0.0.0".to_string() + vpn_config.udp_local_port.to_string().as_str(),
-                e
-            )
-        })?;
+        let udp_local_sock = UdpSocket::bind(&vpn_config.udp_local_addr)
+            .await
+            .inspect_err(|e| {
+                error!(
+                    "[Vpn::new] failed to bind to udp send socket to addr = {} -> {:?}",
+                    vpn_config.udp_local_addr, e
+                )
+            })?;
 
         trace!("[Vpn::new] finished setting up tun interface and udp sockets");
 
@@ -97,9 +89,10 @@ impl Vpn {
 
     pub async fn network_listen(&self) -> Result<(), Error> {
         trace!("[Vpn::network_listen] listening for packets on udp socket");
-        let mut buf = [0u8; 1500];
+        let mut buf = [0u8; 1600];
         loop {
-            self.udp_local_sock
+            let (len, _) = self
+                .udp_local_sock
                 // NOTE: recv() requires UDP socket to be connected, else fails
                 // recv_from() can receive UDP datagrams from arbitrary connections
                 .recv_from(&mut buf)
@@ -116,7 +109,7 @@ impl Vpn {
                 self.tun_addr
             );
 
-            self.tun_device.send(&buf).await.inspect_err(|e| {
+            self.tun_device.send(&buf[..len]).await.inspect_err(|e| {
                 error!(
                     "[Vpn::network_listen] failed to send packet to tun interface = {:?} -> {:?}",
                     self.tun_addr, e
