@@ -1,6 +1,7 @@
 [interface]
 name = "peer_1"
 virtual_address = "10.0.0.2"
+virtual_netmask = "255.255.255.0"
 endpoint = "peer_1:8080"
 
 [peer]

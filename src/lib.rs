@@ -1,10 +1,13 @@
+pub mod config;
+
 use tokio::net::UdpSocket;
 use tracing::{error, trace};
 use tracing_subscriber::{FmtSubscriber, fmt::time};
-
 use tun::{AsyncDevice, Configuration};
 
-use std::{env, io};
+use std::{env, io, net::IpAddr};
+
+pub use config::Config;
 
 const TUN_PACKET_MTU: u16 = 1472;
 
@@ -17,43 +20,27 @@ pub enum Error {
     IoError(#[from] io::Error),
 }
 
-#[derive(Debug)]
-pub struct VpnConfig {
-    tun_addr: String,
-    udp_local_addr: String,
-    udp_remote_addr: String,
+pub struct Device {
+    tun_iface: AsyncDevice,
+    virtual_addr: IpAddr,
+    endpoint_sock: UdpSocket,
+    peer: Peer,
 }
 
-impl VpnConfig {
-    pub fn new(
-        tun_addr: String,
-        udp_local_addr: String,
-        udp_remote_addr: String,
-    ) -> Result<Self, Error> {
-        Ok(VpnConfig {
-            tun_addr,
-            udp_local_addr,
-            udp_remote_addr,
-        })
-    }
+pub struct Peer {
+    name: String,
+    endpoint: String,
 }
 
-pub struct Vpn {
-    tun_device: AsyncDevice,
-    tun_addr: String,
-    udp_local_sock: UdpSocket,
-    udp_remote_addr: String,
-}
-
-impl Vpn {
-    pub async fn new(vpn_config: VpnConfig) -> Result<Self, Error> {
+impl Device {
+    pub async fn new(vpn_config: Config) -> Result<Self, Error> {
         bootstrap_tracing();
 
         let mut config = Configuration::default();
 
         config
-            .address(&vpn_config.tun_addr)
-            .netmask((255, 255, 255, 0))
+            .address(vpn_config.interface.virtual_address)
+            .netmask(vpn_config.interface.virtual_netmask)
             .up();
 
         // network connection might have an mtu of 1500
@@ -64,106 +51,96 @@ impl Vpn {
         let tun_device = tun::create_as_async(&config).inspect_err(|e| {
             error!(
                 "[Vpn::new] failed to create tun device with addr = {:?} -> {:?}",
-                vpn_config.tun_addr, e
+                vpn_config.interface.virtual_address, e
             )
         })?;
 
-        let udp_local_sock = UdpSocket::bind(&vpn_config.udp_local_addr)
+        let udp_local_sock = UdpSocket::bind(&vpn_config.interface.endpoint)
             .await
             .inspect_err(|e| {
                 error!(
                     "[Vpn::new] failed to bind to udp send socket to addr = {} -> {:?}",
-                    vpn_config.udp_local_addr, e
+                    vpn_config.interface.endpoint, e
                 )
             })?;
 
         trace!("[Vpn::new] finished setting up tun interface and udp sockets");
 
-        Ok(Vpn {
-            tun_device,
-            tun_addr: vpn_config.tun_addr,
-            udp_local_sock,
-            udp_remote_addr: vpn_config.udp_remote_addr,
+        Ok(Device {
+            tun_iface: tun_device,
+            virtual_addr: vpn_config.interface.virtual_address,
+            endpoint_sock: udp_local_sock,
+            peer: Peer {
+                name: vpn_config.peer.name,
+                endpoint: vpn_config.peer.endpoint,
+            },
         })
     }
 
-    pub async fn network_listen(&self) -> Result<(), Error> {
-        trace!("[Vpn::network_listen] listening for packets on udp socket");
-        let mut buf = [0u8; 1600];
+    #[warn(unused_parens)]
+    pub async fn start(&self) -> Result<(), Error> {
+        trace!("[Vpn::start] listening on the UDP socket and the tun device");
         loop {
-            let (len, _) = self
-                .udp_local_sock
-                // NOTE: recv() requires UDP socket to be connected, else fails
-                // recv_from() can receive UDP datagrams from arbitrary connections
-                .recv_from(&mut buf)
-                .await
-                .inspect_err(|e| {
+            let mut udp_buf = [0u8; 1600];
+            let mut tun_buf = [0u8; 1600];
+            tokio::select! {
+                res = self.endpoint_sock.recv_from(&mut udp_buf) => {
+                    let (len, recv_addr) = res.inspect_err(|e| {
                     error!(
-                        "[Vpn::network_listen] failed to recv from udp recv socket = {:?} -> {:?}",
-                        self.udp_remote_addr, e
+                        "[Vpn::start] failed to recv from udp recv socket = {:?} -> {:?}",
+                        self.peer.endpoint, e
                     )
-                })?;
+                    })?;
 
-            trace!(
-                "[Vpn::network_listen] received packet at udp socket, attempting to forward packet to tun interface = {:?}",
-                self.tun_addr
-            );
+                    trace!(
+                        "[Vpn::start] received packet at udp socket from {:?}, attempting to forward packet to tun interface = {:?}",
+                        recv_addr, self.virtual_addr
+                    );
 
-            self.tun_device.send(&buf[..len]).await.inspect_err(|e| {
-                error!(
-                    "[Vpn::network_listen] failed to send packet to tun interface = {:?} -> {:?}",
-                    self.tun_addr, e
-                )
-            })?;
+                    self.tun_iface.send(&udp_buf[..len]).await.inspect_err(|e| {
+                        error!(
+                            "[Vpn::start] failed to send packet to tun interface = {:?} -> {:?}",
+                            self.virtual_addr, e
+                        )
+                    })?;
 
-            trace!(
-                "[Vpn::network_listen] forwarded packet to tun interface = {:?}",
-                self.tun_addr
-            );
-        }
+                    trace!(
+                        "[Vpn::start] forwarded packet to tun interface = {:?}",
+                        self.virtual_addr
+                    );
+                }
 
-        #[allow(unreachable_code)]
-        Ok(())
-    }
-
-    pub async fn tun_listen(&self) -> Result<(), Error> {
-        trace!(
-            "[Vpn::tun_listen] listening for packets on the tun interface = {:?}",
-            self.tun_addr
-        );
-
-        let mut buf = [0u8; TUN_PACKET_MTU as usize];
-        loop {
-            self.tun_device.recv(&mut buf).await.inspect_err(|e| {
-                error!(
-                    "[Vpn::tun_listen] failed to recv from tun interface = {:?} -> {:?}",
-                    self.tun_addr, e
-                )
-            })?;
-
-            trace!(
-                "[Vpn::tun_listen] received packet at tun interface, attempting to forward packet to remote udp socket = {:?}",
-                self.udp_remote_addr
-            );
-
-            self.udp_local_sock
-                .send_to(&buf, &self.udp_remote_addr)
-                .await
-                .inspect_err(|e| {
+                res = self.tun_iface.recv(&mut tun_buf) => {
+                    let len = res.inspect_err(|e| {
                     error!(
-                        "[Vpn::tun_listen] failed to send packet to remote udp socket = {:?} -> {:?}", self.udp_remote_addr,
-                        e
+                        "[Vpn::start] failed to recv from tun interface = {:?} -> {:?}",
+                        self.virtual_addr, e
                     )
-                })?;
+                    })?;
 
-            trace!(
-                "[Vpn::tun_listen] forwarded packet to remote udp socket = {:?}",
-                self.udp_remote_addr
-            );
+                    trace!(
+                        "[Vpn::start] received packet at tun interface, attempting to forward packet to remote udp socket = {:?}",
+                        self.peer.endpoint
+                    );
+
+                    self.endpoint_sock
+                        .send_to(&tun_buf[..len], &self.peer.endpoint)
+                        .await
+                        .inspect_err(|e| {
+                            error!(
+                                "[Vpn::start] failed to send packet to remote udp socket = {:?} -> {:?}", self.peer.endpoint,
+                                e
+                            )
+                        })?;
+
+                    trace!(
+                        "[Vpn::start] forwarded packet to remote udp socket = {:?}",
+                        self.peer.endpoint
+                    );
+                }
+
+            }
         }
-
-        #[allow(unreachable_code)]
-        Ok(())
     }
 }
 

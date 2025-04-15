@@ -1,8 +1,6 @@
-mod config;
+use std::env;
 
-use std::{env, sync::Arc};
-
-use snoopy::{Vpn, VpnConfig};
+use snoopy::{Device, config};
 
 const USAGE: &str = "Usage: ./snoopy [path_to_config]";
 
@@ -24,18 +22,6 @@ async fn main() {
     args.next();
     let conf = config::parse_config(&args.next().expect(USAGE));
 
-    let vpn_config = VpnConfig::new(
-        conf.interface.virtual_address,
-        conf.interface.endpoint,
-        conf.peer.endpoint,
-    )
-    .unwrap();
-    let vpn = Vpn::new(vpn_config).await.unwrap();
-    let vpn_tun_listen = Arc::new(vpn);
-    let vpn_network_listen = vpn_tun_listen.clone();
-
-    tokio::spawn(async move {
-        vpn_tun_listen.tun_listen().await.unwrap();
-    });
-    vpn_network_listen.network_listen().await.unwrap();
+    let dev = Device::new(conf).await.unwrap();
+    dev.start().await.expect("failed to start the VPN");
 }
