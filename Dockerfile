@@ -5,7 +5,7 @@ FROM alpine
 WORKDIR /usr/app/snoopy
 
 RUN apk update
-RUN apk add netcat-openbsd
+RUN apk add netcat-openbsd python3 curl
 
 COPY target/aarch64-unknown-linux-musl/debug/snoopy .
 

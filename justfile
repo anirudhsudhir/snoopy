@@ -12,3 +12,6 @@ exec-peer-1:
 
 exec-peer-2:
   docker compose exec peer_2 sh
+
+exec-peer-3:
+  docker compose exec peer_3 sh

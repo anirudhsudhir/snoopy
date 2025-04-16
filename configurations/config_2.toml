@@ -4,6 +4,11 @@ virtual_address = "10.0.0.3"
 virtual_netmask = "255.255.255.0"
 endpoint = "peer_2:8080"
 
-[peer]
-name = "peer_1"
+[[peers]]
+virtual_address = "10.0.0.2"
 endpoint = "peer_1:8080"
+
+
+[[peers]]
+virtual_address = "10.0.0.4"
+endpoint = "peer_3:8080"

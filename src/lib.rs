@@ -1,13 +1,14 @@
 pub mod config;
 
+use etherparse::{NetSlice, SlicedPacket};
 use tokio::net::UdpSocket;
 use tracing::{error, trace};
 use tracing_subscriber::{FmtSubscriber, fmt::time};
 use tun::{AsyncDevice, Configuration};
 
-use std::{env, io, net::IpAddr};
+use std::{collections::HashMap, env, io, net::IpAddr};
 
-pub use config::Config;
+pub use config::{Config, Peer};
 
 const TUN_PACKET_MTU: u16 = 1472;
 
@@ -24,12 +25,7 @@ pub struct Device {
     tun_iface: AsyncDevice,
     virtual_addr: IpAddr,
     endpoint_sock: UdpSocket,
-    peer: Peer,
-}
-
-pub struct Peer {
-    name: String,
-    endpoint: String,
+    peers: HashMap<IpAddr, String>,
 }
 
 impl Device {
@@ -64,16 +60,18 @@ impl Device {
                 )
             })?;
 
-        trace!("[Vpn::new] finished setting up tun interface and udp sockets");
+        trace!("[Vpn::new] finished setting up tun interface and UDP endpoint socket");
+
+        let mut map = HashMap::new();
+        for peer in vpn_config.peers {
+            map.insert(peer.virtual_address, peer.endpoint);
+        }
 
         Ok(Device {
             tun_iface: tun_device,
             virtual_addr: vpn_config.interface.virtual_address,
             endpoint_sock: udp_local_sock,
-            peer: Peer {
-                name: vpn_config.peer.name,
-                endpoint: vpn_config.peer.endpoint,
-            },
+            peers: map,
         })
     }
 
@@ -83,12 +81,13 @@ impl Device {
         loop {
             let mut udp_buf = [0u8; 1600];
             let mut tun_buf = [0u8; 1600];
+
             tokio::select! {
                 res = self.endpoint_sock.recv_from(&mut udp_buf) => {
                     let (len, recv_addr) = res.inspect_err(|e| {
                     error!(
-                        "[Vpn::start] failed to recv from udp recv socket = {:?} -> {:?}",
-                        self.peer.endpoint, e
+                        "[Vpn::start] failed to recv from udp recv socket -> {:?}",
+                        e
                     )
                     })?;
 
@@ -118,24 +117,42 @@ impl Device {
                     )
                     })?;
 
+                    let headers = SlicedPacket::from_ip(&tun_buf).unwrap();
+                    let dest_ip_addr = match headers.net.unwrap() {
+                        NetSlice::Ipv4(ipv4) => {
+                            trace!("[vpn::start] received Ipv4 packet at tun interface: src addr: {:?}, dst addr: {:?}", ipv4.header().source_addr(), ipv4.header().destination_addr());
+                            IpAddr::V4(ipv4.header().destination_addr())
+                        }
+                        NetSlice::Ipv6(ipv6) => {
+                            trace!("[vpn::start] received Ipv6 packet at tun interface: src addr: {:?}, dst addr: {:?}", ipv6.header().source_addr(), ipv6.header().destination_addr());
+                            continue;
+                        }
+                        NetSlice::Arp(arp) => {
+                            trace!("[vpn::start] received arp packet at tun interface, skipping: {:?}", arp);
+                            continue;
+                        }
+                    };
+
+                    let des_addr = dest_ip_addr.to_string();
+                    let send_addr = self.peers.get(&dest_ip_addr).unwrap_or(&des_addr);
                     trace!(
                         "[Vpn::start] received packet at tun interface, attempting to forward packet to remote udp socket = {:?}",
-                        self.peer.endpoint
+                        send_addr
                     );
 
                     self.endpoint_sock
-                        .send_to(&tun_buf[..len], &self.peer.endpoint)
+                        .send_to(&tun_buf[..len], send_addr)
                         .await
                         .inspect_err(|e| {
                             error!(
-                                "[Vpn::start] failed to send packet to remote udp socket = {:?} -> {:?}", self.peer.endpoint,
+                                "[Vpn::start] failed to send packet to remote udp socket = {:?} -> {:?}",send_addr,
                                 e
                             )
                         })?;
 
                     trace!(
                         "[Vpn::start] forwarded packet to remote udp socket = {:?}",
-                        self.peer.endpoint
+                        send_addr
                     );
                 }
 

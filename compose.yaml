@@ -16,3 +16,12 @@ services:
       - NET_ADMIN
     devices:
         - /dev/net/tun
+
+  peer_3:
+    image: snoopy_test
+    volumes:
+      - ./configurations/config_3.toml:/usr/app/snoopy/config.toml
+    cap_add:
+      - NET_ADMIN
+    devices:
+        - /dev/net/tun

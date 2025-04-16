@@ -4,13 +4,13 @@ use serde::Deserialize;
 
 use std::net::IpAddr;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct Config {
     pub interface: Interface,
-    pub peer: Peer,
+    pub peers: Vec<Peer>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct Interface {
     pub name: String,
     pub virtual_address: IpAddr,
@@ -18,9 +18,9 @@ pub struct Interface {
     pub endpoint: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct Peer {
-    pub name: String,
+    pub virtual_address: IpAddr,
     pub endpoint: String,
 }
 
